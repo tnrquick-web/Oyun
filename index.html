@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gökten Düşenler</title>
+    
+
+<script type="module">
+        // Global Firebase variables provided by the Canvas environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, query, limit, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+
+        let app, db, auth;
+        let userId = 'anonymous';
+
+        if (firebaseConfig) {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+
+            // Set debug level for better console visibility
+            setLogLevel('debug');
+
+            // Sign in process
+            const signInUser = async () => {
+                try {
+                    // Try to sign in with custom token first
+                    if (initialAuthToken) {
+                        await setPersistence(auth, browserSessionPersistence);
+                        const userCredential = await signInWithCustomToken(auth, initialAuthToken);
+                        userId = userCredential.user.uid;
+                        console.log("Firebase: Signed in with custom token.", userId);
+                    } else {
+                        // Fallback to anonymous sign-in if token is unavailable
+                        await setPersistence(auth, browserSessionPersistence);
+                        const userCredential = await signInAnonymously(auth);
+                        userId = userCredential.user.uid;
+                        console.log("Firebase: Signed in anonymously.", userId);
+                    }
+                } catch (error) {
+                    console.error("Firebase Auth Error:", error);
+                    // If sign-in fails, use a random ID for temporary session persistence
+                    userId = 'temp-' + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 9));
+                }
+            };
+
+            signInUser().then(() => {
+                // Once authenticated, load the high score
+                window.firebaseReady = true;
+                window.db = db;
+                window.userId = userId;
+                window.appId = appId;
+                if (typeof window.loadHighScore === 'function') {
+                    window.loadHighScore();
+                }
+            });
+        } else {
+            console.warn("Firebase configuration not found. High score saving is disabled.");
+            window.firebaseReady = false;
+        }
+
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;700&display=swap');
+
+        :root {
+            --primary-color: #fca311; /* Orange */
+            --secondary-color: #14213d; /* Dark Blue */
+            --accent-color: #e5e5e5; /* Light Grey */
+            --danger-color: #ef233c; /* Red */
+        }
+
+        body {
+            font-family: 'Fredoka', sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--accent-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+            flex-direction: column;
+        }
+
+        .game-container {
+            background-color: #ffffff;
+            border: 8px solid var(--secondary-color);
+            border-radius: 20px;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+            width: 90vw;
+            max-width: 500px;
+            margin: 20px auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        #gameCanvas {
+            width: 100%;
+            height: 450px; /* Sabit yükseklik, genişlik responsive */
+            display: block;
+            border-bottom: 4px solid var(--primary-color);
+            background: linear-gradient(to bottom, #87ceeb, #f0f8ff); /* Gökyüzü gradienti */
+        }
+
+        .controls-panel {
+            width: 100%;
+            padding: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-sizing: border-box;
+            background-color: var(--secondary-color);
+            color: white;
+            border-radius: 0 0 12px 12px;
+        }
+
+        .score-info {
+            font-size: 1.2rem;
+            font-weight: 700;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            background-color: var(--primary-color);
+            color: var(--secondary-color);
+            border: none;
+            border-radius: 10px;
+            padding: 10px 15px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: transform 0.1s, box-shadow 0.1s;
+            box-shadow: 0 4px var(--primary-color);
+            text-transform: uppercase;
+        }
+
+        button:active {
+            transform: translateY(2px);
+            box-shadow: 0 2px var(--primary-color);
+        }
+
+        #messageBox {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            z-index: 100;
+            box-shadow: 0 0 40px rgba(255, 255, 255, 0.5);
+            max-width: 80%;
+            display: none; /* Initially hidden */
+            font-size: 1.1rem;
+        }
+
+        #messageBox h2 {
+            margin-top: 0;
+            color: var(--primary-color);
+            font-size: 2em;
+        }
+        
+        /* Mobile-specific controls (Touch buttons) */
+        .mobile-controls {
+            display: flex;
+            justify-content: space-around;
+            width: 100%;
+            padding: 10px 0;
+            background-color: var(--secondary-color); 
+            border-radius: 0 0 20px 20px;
+        }
+
+        .mobile-button {
+            background-color: var(--primary-color);
+            color: var(--secondary-color);
+            border: none;
+            border-radius: 50%;
+            width: 70px; 
+            height: 70px; 
+            font-size: 2.5em; 
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            box-shadow: 0 4px #cc8400;
+            margin: 0 15px;
+        }
+
+        .mobile-button:active {
+            transform: translateY(2px);
+            box-shadow: 0 2px #cc8400;
+        }
+        
+        .footer-info {
+            color: var(--secondary-color);
+            font-size: 0.8rem;
+            margin-top: 10px;
+            opacity: 0.7;
+            padding-bottom: 10px;
+        }
+
+        /* Responsive adjustments */
+        @media (min-width: 600px) {
+            .game-container {
+                width: 70vw;
+                max-width: 600px;
+            }
+            #gameCanvas {
+                height: 550px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="game-container">
+        <canvas id="gameCanvas"></canvas>
+
+        <div class="controls-panel">
+            <div class="score-info">Puan: <span id="scoreDisplay">0</span></div>
+            <div class="score-info">Yüksek Puan: <span id="highScoreDisplay">0</span></div>
+            <div class="button-group">
+                <button id="startButton">BAŞLAT</button>
+            </div>
+        </div>
+    </div>
+    
+    
+    <div class="mobile-controls">
+        <button class="mobile-button" id="leftButton">◀</button>
+        <button class="mobile-button" id="rightButton">▶</button>
+    </div>
+
+    <div class="footer-info">
+        <span id="userIdDisplay">Kullanıcı ID: Yükleniyor...</span>
+        <br>
+        Bilgisayarda A/D veya Sol/Sağ ok tuşlarını kullanabilirsiniz. (Önemli: Önce BAŞLAT'a basın.)
+    </div>
+
+    <div id="messageBox">
+        <h2>Oyun Bitti!</h2>
+        <p id="finalScoreText"></p>
+        <button id="restartButton">TEKRAR OYNA</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const highScoreDisplay = document.getElementById('highScoreDisplay');
+        const startButton = document.getElementById('startButton');
+        const messageBox = document.getElementById('messageBox');
+        const restartButton = document.getElementById('restartButton');
+        const finalScoreText = document.getElementById('finalScoreText');
+        const userIdDisplay = document.getElementById('userIdDisplay');
+
+        // Game State Variables
+        let gameLoopId;
+        let isGameOver = true;
+        let score = 0;
+        let highScore = 0;
+        
+        // Player (Catcher) - Boyutlar ve hız korunuyor
+        const player = {
+            x: 0,
+            y: 0,
+            width: 100, 
+            height: 30, 
+            speed: 3, 
+            color: '#14213d',
+            dx: 0,
+            emoji: '🧺' 
+        };
+
+        // Falling Items
+        let fallingItems = [];
+        let itemSpawnRate = 100; 
+        let frameCount = 0;
+        
+        const goodItems = ['⭐️', '💰', '🍎', '💎'];
+        const badItems = ['💣', '🦠', '🧱'];
+        const MIN_HORIZONTAL_SPACING = 60; // Minimum yatay boşluk
+
+        // High Score Persistence Setup (Firebase)
+        const HIGH_SCORE_COLLECTION = 'high_score';
+        const HIGH_SCORE_DOC_ID = 'game_score';
+
+        // Helper for Firebase path construction
+        const getHighScoreDocRef = () => {
+            if (window.db && window.userId && window.appId) {
+                return doc(window.db, 
+                    'artifacts', window.appId, 
+                    'users', window.userId, 
+                    HIGH_SCORE_COLLECTION, HIGH_SCORE_DOC_ID
+                );
+            }
+            return null;
+        };
+        
+        window.loadHighScore = async () => {
+            if (!window.firebaseReady) {
+                highScoreDisplay.textContent = '—';
+                userIdDisplay.textContent = `Kullanıcı ID: Yükleniyor...`;
+                return;
+            }
+
+            userIdDisplay.textContent = `Kullanıcı ID: ${window.userId}`;
+
+            const docRef = getHighScoreDocRef();
+            if (!docRef) return;
+
+            try {
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    highScore = docSnap.data().score || 0;
+                } else {
+                    highScore = 0;
+                }
+                highScoreDisplay.textContent = highScore;
+            } catch (error) {
+                console.error("Yüksek puan yüklenirken hata:", error);
+                highScoreDisplay.textContent = 'Hata';
+            }
+        };
+
+        const saveHighScore = async () => {
+            if (!window.firebaseReady || score <= highScore) return;
+
+            const docRef = getHighScoreDocRef();
+            if (!docRef) return;
+            
+            highScore = score;
+            highScoreDisplay.textContent = highScore;
+            
+            try {
+                await setDoc(docRef, { 
+                    score: highScore, 
+                    timestamp: new Date().toISOString() 
+                }, { merge: true });
+                console.log("Yeni yüksek puan kaydedildi:", highScore);
+            } catch (error) {
+                console.error("Yüksek puan kaydedilirken hata:", error);
+            }
+        };
+
+
+        // Canvas Resizing (Must be done first)
+        function resizeCanvas() {
+            canvas.width = canvas.clientWidth;
+            canvas.height = canvas.clientHeight;
+            
+            // Re-center player after resize
+            player.x = canvas.width / 2 - player.width / 2;
+            player.y = canvas.height - player.height - 10;
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+
+        // Falling Item Object
+        function createItem() {
+            // Kötü öğelerin düşme sıklığı 0.2'den 0.35'e çıkarıldı. (İyi öğe şansı: 0.8 -> 0.65)
+            const isGood = Math.random() < 0.65; 
+            const items = isGood ? goodItems : badItems;
+            
+            let newX;
+            let collisionDetected;
+            let attempts = 0;
+            const maxAttempts = 10; // Sonsuz döngüyü önlemek için
+
+            do {
+                collisionDetected = false;
+                newX = Math.random() * (canvas.width - 30); // 30 emoji boyutu
+
+                for (let i = 0; i < fallingItems.length; i++) {
+                    const existingItem = fallingItems[i];
+                    // Sadece ekrana henüz düşmekte olan öğeleri kontrol et
+                    if (existingItem.y < 100) { // Ekranın üst kısmında henüz düşmekte olanlar
+                         // Yatayda yeterli boşluk var mı kontrol et
+                        if (Math.abs(newX - existingItem.x) < MIN_HORIZONTAL_SPACING) {
+                            collisionDetected = true;
+                            break;
+                        }
+                    }
+                }
+                attempts++;
+            } while (collisionDetected && attempts < maxAttempts);
+
+
+            return {
+                x: newX,
+                y: -30,
+                radius: 15,
+                // Düşme hızı geri yükseltildi
+                speed: Math.random() * 1.5 + 2, 
+                emoji: items[Math.floor(Math.random() * items.length)],
+                isGood: isGood
+            };
+        }
+
+        function drawPlayer() {
+            ctx.font = '50px Fredoka';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(player.emoji, player.x + player.width / 2, player.y + player.height / 2 + 5);
+        }
+
+        function updatePlayer() {
+            player.x += player.dx;
+
+            // Boundary checks
+            if (player.x < 0) {
+                player.x = 0;
+            }
+            if (player.x + player.width > canvas.width) {
+                player.x = canvas.width - player.width;
+            }
+        }
+
+        function drawItems() {
+            ctx.font = '30px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            fallingItems.forEach(item => {
+                ctx.fillText(item.emoji, item.x, item.y);
+            });
+        }
+
+        function updateItems() {
+            for (let i = fallingItems.length - 1; i >= 0; i--) {
+                const item = fallingItems[i];
+                item.y += item.speed;
+
+                // 1. Collision Detection (Simple AABB style for the catcher basket)
+                if (item.y + item.radius > player.y &&
+                    item.x > player.x &&
+                    item.x < player.x + player.width) {
+                    
+                    if (item.isGood) {
+                        score += 1;
+                        scoreDisplay.textContent = score;
+                    } else {
+                        // Game Over: Caught a bad item
+                        gameOver();
+                        return;
+                    }
+                    
+                    // Remove caught item
+                    fallingItems.splice(i, 1);
+                    continue;
+                }
+
+                // 2. Missed item (passed the bottom)
+                if (item.y > canvas.height) {
+                    if (item.isGood) {
+                        // Let's just ignore for simplicity, but remove it.
+                    } else {
+                        // If a bad item is missed, nothing happens.
+                    }
+                    fallingItems.splice(i, 1);
+                }
+            }
+            
+            // Item spawning
+            frameCount++;
+            if (frameCount % itemSpawnRate === 0) {
+                fallingItems.push(createItem());
+            }
+            
+            // Increase difficulty over time
+            if (frameCount % 600 === 0) { 
+                if (itemSpawnRate > 30) {
+                    itemSpawnRate -= 10;
+                }
+                fallingItems.forEach(item => item.speed += 0.5);
+            }
+        }
+        
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function gameLoop() {
+            if (isGameOver) return;
+
+            clearCanvas();
+            updatePlayer();
+            updateItems();
+            drawItems();
+            drawPlayer();
+
+            gameLoopId = requestAnimationFrame(gameLoop);
+        }
+
+        function startGame() {
+            if (!isGameOver) return; 
+
+            messageBox.style.display = 'none';
+            isGameOver = false;
+            score = 0;
+            scoreDisplay.textContent = score;
+            fallingItems = [];
+            itemSpawnRate = 100; // Başlangıç değeri sıfırlanıyor
+            frameCount = 0;
+            
+            // Reset player position
+            player.x = canvas.width / 2 - player.width / 2;
+            player.dx = 0;
+
+            // Start loop
+            gameLoop();
+            startButton.textContent = 'DEVAM ET';
+        }
+        
+        function gameOver() {
+            isGameOver = true;
+            cancelAnimationFrame(gameLoopId);
+            
+            // Display message
+            finalScoreText.innerHTML = `Skorun: <strong>${score}</strong>.`;
+            
+            if (score > highScore) {
+                finalScoreText.innerHTML += `<br><strong>YENİ YÜKSEK PUAN!</strong>`;
+                saveHighScore();
+            } else {
+                finalScoreText.innerHTML += `<br>En İyi Skorun: ${highScore}.`;
+            }
+
+            messageBox.style.display = 'block';
+        }
+        
+        function init() {
+            resizeCanvas(); 
+            if (window.firebaseReady && typeof window.loadHighScore === 'function') {
+                window.loadHighScore();
+            }
+            
+            // Initial Game Over state setup
+            isGameOver = true;
+            messageBox.style.display = 'block';
+            document.querySelector('#messageBox h2').textContent = 'Gökten Düşenler';
+            finalScoreText.innerHTML = `Yıldızları (⭐️) topla, bombalardan (💣) kaçın! Hazır ol!`;
+            restartButton.textContent = 'BAŞLAT';
+        }
+
+        // --- Event Listeners and Controls ---
+        
+        startButton.addEventListener('click', startGame);
+        restartButton.addEventListener('click', startGame);
+
+        // Keyboard Controls (Masaüstü için)
+        document.addEventListener('keydown', (e) => {
+            if (isGameOver) return;
+            if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') {
+                e.preventDefault(); 
+                player.dx = -player.speed;
+            } else if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') {
+                e.preventDefault(); 
+                player.dx = player.speed;
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a' || e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') {
+                player.dx = 0;
+            }
+        });
+        
+        // Touch/Mobile Controls
+        const leftButton = document.getElementById('leftButton');
+        const rightButton = document.getElementById('rightButton');
+        
+        const stopMovement = () => {
+             player.dx = 0;
+        };
+
+        // Sol tuşa basıldığında
+        leftButton.addEventListener('touchstart', (e) => { 
+            e.preventDefault(); 
+            if (!isGameOver) player.dx = -player.speed; 
+        });
+        // Sol tuş bırakıldığında veya dokunma kesildiğinde
+        leftButton.addEventListener('touchend', stopMovement);
+        leftButton.addEventListener('touchcancel', stopMovement);
+        
+        // Sağ tuşa basıldığında
+        rightButton.addEventListener('touchstart', (e) => { 
+            e.preventDefault(); 
+            if (!isGameOver) player.dx = player.speed; 
+        });
+        // Sağ tuş bırakıldığında veya dokunma kesildiğinde
+        rightButton.addEventListener('touchend', stopMovement);
+        rightButton.addEventListener('touchcancel', stopMovement);
+
+
+        // Start the game initialization when the window loads
+        window.onload = init;
+    </script>
+
